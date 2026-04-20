@@ -1,1 +1,148 @@
+body {
+  font-family: Arial, sans-serif;
+  margin: 0;
+  background: #f5f7fb;
+}
 
+/* HEADER */
+.header {
+  background: #2563eb;
+  color: white;
+  text-align: center;
+  padding: 30px 20px;
+}
+
+/* CARD */
+.card {
+  background: white;
+  margin: 20px auto;
+  padding: 20px;
+  max-width: 600px;
+  border-radius: 10px;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+}
+
+/* SEARCH */
+.search-bar {
+  display: flex;
+  gap: 10px;
+}
+
+.search-bar input {
+  flex: 1;
+  padding: 10px;
+}
+
+.search-bar button {
+  padding: 10px 15px;
+  background: black;
+  color: white;
+  border: none;
+  cursor: pointer;
+}
+
+/* AUTOCOMPLETE */
+.autocomplete-list {
+  list-style: none;
+  padding: 0;
+  margin: 5px 0;
+  border: 1px solid #ddd;
+  max-height: 150px;
+  overflow-y: auto;
+  display: none;
+}
+
+.autocomplete-list li {
+  padding: 10px;
+  cursor: pointer;
+}
+
+.autocomplete-list li:hover {
+  background: #eee;
+}
+
+/* INFO BOX */
+.info-box {
+  margin-top: 20px;
+  background: #eef4ff;
+  padding: 15px;
+  border-radius: 8px;
+}
+
+/* RESULTS */
+.hidden {
+  display: none;
+}
+
+.results-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 20px;
+}
+
+.summary-card {
+  background: #d1fae5;
+  margin: 10px 20px;
+  padding: 15px;
+  border-radius: 10px;
+}
+
+/* FILTERS */
+.filters {
+  display: flex;
+  gap: 10px;
+  padding: 0 20px;
+}
+
+.filters button {
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+/* BLOCK CARD */
+.block-card {
+  background: white;
+  margin: 15px 20px;
+  padding: 15px;
+  border-radius: 10px;
+  border-left: 6px solid green;
+}
+
+.block-card.warning {
+  border-color: orange;
+}
+
+.block-card.danger {
+  border-color: red;
+}
+
+.block-card.suspended {
+  border-color: purple;
+}
+
+.card-header {
+  display: flex;
+  justify-content: space-between;
+}
+
+.side {
+  background: black;
+  color: white;
+  padding: 3px 6px;
+  border-radius: 5px;
+  font-size: 12px;
+}
+
+.safe-time {
+  background: #d1fae5;
+  padding: 10px;
+  margin-top: 10px;
+  border-radius: 8px;
+}
+
+.next-cleaning {
+  margin-top: 10px;
+  font-size: 14px;
+  color: #555;
+}

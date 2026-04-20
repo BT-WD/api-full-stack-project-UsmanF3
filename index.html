@@ -1,11 +1,94 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>API Full Stack Project</title>
-  </head>
-  <body>
-    <!-- You code goes here-->
-  </body>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>NYC Parking Finder</title>
+  <link rel="stylesheet" href="index.css" />
+</head>
+<body>
+
+  <!-- HEADER -->
+  <header class="header">
+    <h1>NYC Parking Finder</h1>
+    <p>Find safe parking spots near you</p>
+  </header>
+
+  <!-- SEARCH SECTION -->
+  <section id="search-section" class="card">
+    <h2>Enter Location</h2>
+
+    <div class="search-bar">
+      <input 
+        type="text" 
+        id="location-input" 
+        placeholder="Enter NYC address..."
+        autocomplete="off"
+      />
+      <button id="search-btn">Search</button>
+    </div>
+
+    <!-- AUTOCOMPLETE DROPDOWN -->
+    <ul id="autocomplete-list" class="autocomplete-list"></ul>
+
+    <!-- HOW IT WORKS -->
+    <div class="info-box">
+      <h3>How it works:</h3>
+      <ul>
+        <li>Enter your address</li>
+        <li>See parking rules within 5 blocks</li>
+        <li>Know when to move your car</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- RESULTS SECTION -->
+  <section id="results-section" class="hidden">
+
+    <div class="results-header">
+      <button id="back-btn">← Back</button>
+      <h2 id="location-title">Parking near ...</h2>
+    </div>
+
+    <!-- SUMMARY -->
+    <div class="summary-card">
+      <h3 id="summary-text">6 of 8 blocks are safe</h3>
+      <p id="summary-subtext">6 spots safe until tomorrow</p>
+    </div>
+
+    <!-- FILTERS -->
+    <div class="filters">
+      <button>All Blocks</button>
+      <button>Safe Now</button>
+      <button>Closest First</button>
+    </div>
+
+    <!-- RESULTS LIST -->
+    <div id="results-container">
+      <!-- BLOCK CARD TEMPLATE -->
+      <div class="block-card safe">
+        <div class="card-header">
+          <h3>E 23rd Street <span class="side">North Side</span></h3>
+          <span class="status">✔</span>
+        </div>
+
+        <p class="distance">0.1 miles away</p>
+
+        <div class="safe-time">
+          Safe until: Tomorrow 8:00 AM
+        </div>
+
+        <div class="next-cleaning">
+          Next cleaning: Friday 8:00 AM – 11:00 AM
+        </div>
+      </div>
+
+      <!-- Placeholder for dynamic cards -->
+      <div id="data-container"></div>
+    </div>
+
+  </section>
+
+  <script src="index.js"></script>
+</body>
 </html>
