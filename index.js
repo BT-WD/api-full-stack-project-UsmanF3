@@ -1,6 +1,14 @@
 const MAPBOX_TOKEN = "pk.eyJ1IjoidXNtYW5mMyIsImEiOiJjbW83ZTd2czgwMGtxMnhwdTZ6cWFpZW41In0.NeNw5pvNgdhpHRnGofyexA";
 const DOT_SIGNS_DATASET_URL = "https://data.cityofnewyork.us/resource/nfid-uabd.json";
 
+const API_RETRY_ATTEMPTS = 3;
+const API_TIMEOUT_MS = 8000;
+const MAPBOX_BBOX = "-74.2591,40.4774,-73.7004,40.9176";
+
+let currentSearchCoords = null;
+let filteredParkingData = [];
+let currentFilter = "all";
+
 const searchBtn = document.getElementById("search-btn");
 const backBtn = document.getElementById("back-btn");
 
@@ -10,6 +18,55 @@ const resultsSection = document.getElementById("results-section");
 const input = document.getElementById("location-input");
 const autocompleteList = document.getElementById("autocomplete-list");
 const resultsContainer = document.getElementById("data-container");
+
+async function fetchWithRetry(url, options = {}) {
+  const maxAttempts = options.maxAttempts || API_RETRY_ATTEMPTS;
+  const timeout = options.timeout || API_TIMEOUT_MS;
+  
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeout);
+      
+      const response = await fetch(url, {
+        ...options,
+        signal: controller.signal
+      });
+      
+      clearTimeout(timeoutId);
+      
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      
+      return response;
+    } catch (error) {
+      clearTimeout(timeoutId);
+      
+      if (attempt === maxAttempts) {
+        throw error;
+      }
+      
+      const delayMs = 500 * Math.pow(2, attempt - 1);
+      await new Promise(resolve => setTimeout(resolve, delayMs));
+    }
+  }
+}
+
+function calculateDistance(lat1, lon1, lat2, lon2) {
+  const R = 3959;
+  const toRad = Math.PI / 180;
+  
+  const dLat = (lat2 - lat1) * toRad;
+  const dLon = (lon2 - lon1) * toRad;
+  
+  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+            Math.cos(lat1 * toRad) * Math.cos(lat2 * toRad) *
+            Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
 
 function clearSelectionState() {
   delete input.dataset.lng;
@@ -194,88 +251,161 @@ async function fetchParkingByStreet(streetName) {
   const variants = normalizeStreetVariants(streetName);
 
   for (const variant of variants) {
-    const escapedStreet = variant.replace(/'/g, "''");
-    const where = `upper(on_street) like '%${escapedStreet}%'`;
-    const url = `${DOT_SIGNS_DATASET_URL}?%24where=${encodeURIComponent(where)}&%24limit=20`;
+    try {
+      const escapedStreet = variant.replace(/'/g, "''");
+      const where = `upper(on_street) like '%${escapedStreet}%'`;
+      const url = `${DOT_SIGNS_DATASET_URL}?%24where=${encodeURIComponent(where)}&%24limit=50`;
 
-    const res = await fetch(url);
-    if (!res.ok) {
-      throw new Error(`DOT API failed with status ${res.status}`);
-    }
+      const res = await fetchWithRetry(url, { 
+        maxAttempts: 2,
+        timeout: 6000 
+      });
 
-    const data = await res.json();
-    if (Array.isArray(data) && data.length) {
-      const filtered = data.filter(item => streetLooksLikeMatch(item.on_street, variant));
-      if (filtered.length) {
-        return filtered;
+      const data = await res.json();
+      
+      if (Array.isArray(data) && data.length) {
+        const filtered = data.filter(item => streetLooksLikeMatch(item.on_street, variant));
+        if (filtered.length) {
+          return filtered;
+        }
       }
+    } catch (error) {
+      console.warn(`Failed to fetch parking for variant "${variant}":`, error.message);
+      continue;
     }
   }
 
   return [];
 }
 
+let autocompleteHighlightIndex = -1;
+
+function clearAutocompleteHighlight() {
+  const items = autocompleteList.querySelectorAll("li");
+  items.forEach(item => item.classList.remove("highlighted"));
+  autocompleteHighlightIndex = -1;
+}
+
+function showAutocompleteLoading() {
+  autocompleteList.innerHTML = '<li class="loading">Searching...</li>';
+  autocompleteList.style.display = "block";
+}
+
 input.addEventListener("input", async () => {
   const query = input.value.trim();
   clearSelectionState();
+  clearAutocompleteHighlight();
 
   if (query.length < 3) {
     autocompleteList.style.display = "none";
     return;
   }
 
+  showAutocompleteLoading();
+
   try {
-    const res = await fetch(
-      `https://api.mapbox.com/geocoding/v5/mapbox.places/${query}.json?access_token=${MAPBOX_TOKEN}&autocomplete=true&limit=5&bbox=-74.2591,40.4774,-73.7004,40.9176`
+    const res = await fetchWithRetry(
+      `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query)}.json?access_token=${MAPBOX_TOKEN}&autocomplete=true&limit=8&bbox=${MAPBOX_BBOX}`,
+      { timeout: 5000 }
     );
 
-    if (!res.ok) throw new Error("Autocomplete failed");
+    if (!res.ok) throw new Error("Autocomplete API failed");
 
     const data = await res.json();
-
     autocompleteList.innerHTML = "";
 
     const nycResults = data.features.filter(place =>
-      place.place_name.includes("New York")
+      place.place_name.toLowerCase().includes("new york")
     );
 
-    nycResults.forEach(place => {
+    if (nycResults.length === 0) {
+      autocompleteList.innerHTML = '<li class="no-results">No NYC results found</li>';
+      autocompleteList.style.display = "block";
+      return;
+    }
+
+    nycResults.forEach((place, index) => {
       const li = document.createElement("li");
       li.textContent = place.place_name;
+      li.setAttribute("data-index", index);
 
-      li.onclick = () => {
-        input.value = place.place_name;
-        input.dataset.lng = place.center[0];
-        input.dataset.lat = place.center[1];
-        input.dataset.valid = "true";
-        input.dataset.street = extractStreetName(place.place_name) || place.text || "";
-        autocompleteList.style.display = "none";
+      li.onclick = () => selectAutocompleteItem(place);
+      li.onmouseover = () => {
+        clearAutocompleteHighlight();
+        li.classList.add("highlighted");
+        autocompleteHighlightIndex = index;
       };
 
       autocompleteList.appendChild(li);
     });
 
-    autocompleteList.style.display =
-      nycResults.length > 0 ? "block" : "none";
+    autocompleteList.style.display = "block";
 
   } catch (err) {
-    console.error(err);
+    console.error("Autocomplete error:", err);
+    autocompleteList.innerHTML = '<li class="error">Error loading suggestions</li>';
+    autocompleteList.style.display = "block";
   }
 });
 
+function selectAutocompleteItem(place) {
+  input.value = place.place_name;
+  input.dataset.lng = place.center[0];
+  input.dataset.lat = place.center[1];
+  input.dataset.valid = "true";
+  input.dataset.street = extractStreetName(place.place_name) || place.text || "";
+  currentSearchCoords = { lat: place.center[1], lng: place.center[0] };
+  autocompleteList.style.display = "none";
+  clearAutocompleteHighlight();
+}
+
+input.addEventListener("keydown", (e) => {
+  const items = autocompleteList.querySelectorAll("li:not(.loading):not(.error):not(.no-results)");
+  
+  if (e.key === "ArrowDown") {
+    e.preventDefault();
+    autocompleteHighlightIndex = Math.min(autocompleteHighlightIndex + 1, items.length - 1);
+    clearAutocompleteHighlight();
+    if (items[autocompleteHighlightIndex]) {
+      items[autocompleteHighlightIndex].classList.add("highlighted");
+    }
+  } else if (e.key === "ArrowUp") {
+    e.preventDefault();
+    autocompleteHighlightIndex = Math.max(autocompleteHighlightIndex - 1, -1);
+    clearAutocompleteHighlight();
+    if (autocompleteHighlightIndex >= 0 && items[autocompleteHighlightIndex]) {
+      items[autocompleteHighlightIndex].classList.add("highlighted");
+    }
+  } else if (e.key === "Enter" && autocompleteHighlightIndex >= 0) {
+    e.preventDefault();
+    items[autocompleteHighlightIndex].click();
+  }
+});
+
+document.addEventListener("click", (e) => {
+  if (e.target !== input && !autocompleteList.contains(e.target)) {
+    autocompleteList.style.display = "none";
+  }
+});
+
+
 searchBtn.addEventListener("click", async () => {
-  const location = input.value;
+  const location = input.value.trim();
   const lat = input.dataset.lat;
   const lng = input.dataset.lng;
   const valid = input.dataset.valid;
 
-  if (!location || !lat || !lng || valid !== "true") {
-    alert("Please select a valid NYC address from the dropdown.");
+  if (!location) {
+    showInputError("Please enter a location");
     return;
   }
 
-  document.getElementById("location-title").textContent =
-    "Parking near " + location;
+  if (!lat || !lng || valid !== "true") {
+    showInputError("Please select a valid NYC address from the dropdown");
+    return;
+  }
+
+  document.getElementById("location-title").textContent = "Parking near " + location;
 
   searchSection.classList.add("hidden");
   resultsSection.classList.remove("hidden");
@@ -283,34 +413,48 @@ searchBtn.addEventListener("click", async () => {
   await loadParkingData();
 });
 
+function showInputError(message) {
+  alert(message);
+  input.focus();
+  input.classList.add("error");
+  setTimeout(() => input.classList.remove("error"), 2000);
+}
+
 async function loadParkingData() {
-  resultsContainer.innerHTML = "<p>Loading parking data...</p>";
+  resultsContainer.innerHTML = '<div class="loading-spinner"><p>Loading parking data...</p></div>';
+  currentFilter = "all";
 
   try {
     const street = input.dataset.street || extractStreetName(input.value);
 
     if (!street) {
-      resultsContainer.innerHTML = "<p>Could not detect street name.</p>";
+      resultsContainer.innerHTML = '<p class="error-message">Could not detect street name. Please try a different address.</p>';
       return;
     }
 
     const data = await fetchParkingByStreet(street);
 
     if (!data.length) {
-      resultsContainer.innerHTML = "<p>No parking data found for this street.</p>";
+      resultsContainer.innerHTML = '<p class="error-message">No parking data found for this street. Try a nearby street.</p>';
       return;
     }
 
-    const formatted = formatParkingData(data).slice(0, 10);
+    const formatted = formatParkingData(data).slice(0, 20);
+    filteredParkingData = formatted;
+    
     renderParkingCards(formatted);
+    setupFilters();
 
   } catch (err) {
     console.error("Parking fetch error:", err);
-    resultsContainer.innerHTML = "<p>Error loading parking data.</p>";
+    resultsContainer.innerHTML = `<p class="error-message">Failed to load parking data. Please try again.</p>`;
   }
 }
 
+
 function formatParkingData(data) {
+  if (!currentSearchCoords) return [];
+
   return data.map(item => {
     let status = "safe";
     const signDescription = (item.sign_description || "").toUpperCase();
@@ -323,47 +467,108 @@ function formatParkingData(data) {
       status = "suspended";
     }
 
+    let distance = 0;
+    if (item.latitude && item.longitude) {
+      distance = calculateDistance(
+        currentSearchCoords.lat,
+        currentSearchCoords.lng,
+        parseFloat(item.latitude),
+        parseFloat(item.longitude)
+      );
+    }
+
     return {
       street: item.on_street || "Unknown street",
       side: item.side_of_street || "Unknown side",
-      distance: (Math.random() * 0.3 + 0.05).toFixed(2),
+      distance: Math.max(distance, 0.05).toFixed(2),
       readableRule: formatReadableRule(item.sign_description),
       recordDate: formatRecordDate(item.order_completed_on_date),
       status
     };
-  });
+  }).sort((a, b) => parseFloat(a.distance) - parseFloat(b.distance));
 }
 
 function renderParkingCards(data) {
   resultsContainer.innerHTML = "";
 
+  if (!data || data.length === 0) {
+    resultsContainer.innerHTML = '<p class="no-results">No parking spots match your filter</p>';
+    return;
+  }
+
   data.forEach(block => {
     const card = document.createElement("div");
     card.className = `block-card ${block.status}`;
 
+    const statusIcon = block.status === "safe" ? "✓" : "⚠";
+    const statusLabel = {
+      safe: "Safe",
+      warning: "Check Posted Rules",
+      danger: "No Parking",
+      suspended: "Suspended"
+    }[block.status] || "Unknown";
+
     card.innerHTML = `
       <div class="card-header">
-        <h3>${block.street} <span class="side">${block.side}</span></h3>
-        <span>${block.status === "safe" ? "✔" : "!"}</span>
+        <div>
+          <h3>${block.street} <span class="side">${block.side}</span></h3>
+          <p class="status-label">${statusIcon} ${statusLabel}</p>
+        </div>
+        <span class="distance-badge">${block.distance} mi</span>
       </div>
-      <p class="distance">${block.distance} miles away</p>
-      <div class="safe-time">${block.readableRule}</div>
-      <div class="next-cleaning">Record date: ${block.recordDate}</div>
+      <p class="rule-text">${block.readableRule}</p>
+      <div class="card-footer">
+        <small>Updated: ${block.recordDate}</small>
+      </div>
     `;
 
     resultsContainer.appendChild(card);
   });
 
   const safeCount = data.filter(d => d.status === "safe").length;
+  const warningCount = data.filter(d => d.status === "warning").length;
 
   document.getElementById("summary-text").textContent =
     `${safeCount} of ${data.length} blocks are safe`;
 
   document.getElementById("summary-subtext").textContent =
-    "Live NYC DOT data";
+    `${warningCount} blocks need attention • Updated: ${new Date().toLocaleTimeString()}`;
+}
+
+function setupFilters() {
+  const filterButtons = document.querySelectorAll(".filters button");
+  
+  filterButtons.forEach(btn => {
+    btn.classList.remove("active");
+    btn.onclick = () => {
+      filterButtons.forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      
+      const filterType = btn.textContent.trim();
+      applyFilter(filterType);
+    };
+  });
+
+  filterButtons[0].classList.add("active");
+}
+
+function applyFilter(filterType) {
+  let filtered = [...filteredParkingData];
+
+  if (filterType === "Safe Now") {
+    filtered = filtered.filter(d => d.status === "safe");
+  } else if (filterType === "Closest First") {
+    filtered.sort((a, b) => parseFloat(a.distance) - parseFloat(b.distance));
+  } else if (filterType === "All Blocks") {
+    filtered.sort((a, b) => parseFloat(a.distance) - parseFloat(b.distance));
+  }
+
+  renderParkingCards(filtered);
 }
 
 backBtn.addEventListener("click", () => {
   resultsSection.classList.add("hidden");
   searchSection.classList.remove("hidden");
+  clearSelectionState();
+  input.focus();
 });
